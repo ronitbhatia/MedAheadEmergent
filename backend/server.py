@@ -334,6 +334,8 @@ async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
             contacts = await contacts_cursor.to_list(length=5)
         
         user_profile = await db.users.find_one({"id": user_id})
+        if user_profile:
+            user_profile = convert_objectid_to_str(user_profile)
         
         recommendations = []
         time_slots = ["Day 1, 10:00 AM", "Day 1, 2:00 PM", "Day 2, 11:00 AM", "Day 2, 3:00 PM", "Day 3, 9:00 AM"]
