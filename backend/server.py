@@ -270,47 +270,29 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
         if not contacts:
             return {"analyzed_contacts": [], "message": "No contacts to analyze"}
         
-        # Use AI to analyze and score contacts
-        chat = await get_gemini_chat(
-            session_id=f"analysis-{user_id}",
-            system_message="You are a sales intelligence AI specializing in healthcare conference networking."
-        )
+        # Convert MongoDB documents to serializable format
+        contacts = [convert_objectid_to_str(contact) for contact in contacts]
         
+        # Simple scoring logic for MVP (to avoid rate limits with Gemini)
         analyzed_contacts = []
         for contact in contacts:
-            prompt = f"""
-            Analyze this contact for networking priority:
-            
-            Contact: {contact['name']} at {contact['company']}
-            Title: {contact['title']}
-            Industry: {contact['industry']}
-            
-            User Profile:
-            Company: {user_profile.get('company')}
-            Industry: {user_profile.get('industry')} 
-            Goals: {user_profile.get('goals')}
-            
-            Provide a networking score (1-100) and priority level (high/medium/low) with reasoning.
-            """
-            
-            user_message = UserMessage(text=prompt)
-            response = await chat.send_message(user_message)
-            
-            # Parse AI response and assign scores (simplified for MVP)
-            score = 75  # Default score
+            # Simple scoring logic based on titles and companies
+            score = 60  # Base score
             priority = "medium"
             
-            # Simple scoring logic based on titles and companies
-            if any(keyword in contact['title'].lower() for keyword in ['ceo', 'cto', 'vp', 'director', 'chief']):
-                score += 15
+            if any(keyword in contact.get('title', '').lower() for keyword in ['ceo', 'cto', 'vp', 'director', 'chief']):
+                score += 20
                 priority = "high"
             
-            if any(keyword in contact['company'].lower() for keyword in ['hospital', 'health system', 'medical center']):
+            if any(keyword in contact.get('company', '').lower() for keyword in ['hospital', 'health system', 'medical center']):
+                score += 15
+                
+            if any(keyword in contact.get('industry', '').lower() for keyword in ['healthcare', 'medical', 'pharma']):
                 score += 10
                 
             contact['score'] = min(score, 100)
             contact['priority'] = priority
-            contact['ai_notes'] = f"AI Analysis: High potential based on {contact['title']} role"
+            contact['ai_notes'] = f"Scored based on {contact.get('title', 'role')} and industry relevance"
             
             analyzed_contacts.append(contact)
         
@@ -333,7 +315,8 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
             "low_priority": len([c for c in analyzed_contacts if c['priority'] == 'low'])
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+
 
 @app.post("/api/meetings/suggest")
 async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
@@ -343,42 +326,34 @@ async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
         contacts_cursor = db.contacts.find({"priority": "high"}).limit(10)
         contacts = await contacts_cursor.to_list(length=10)
         
+        if not contacts:
+            # If no high priority contacts, get any contacts
+            contacts_cursor = db.contacts.find({}).limit(5)
+            contacts = await contacts_cursor.to_list(length=5)
+        
         user_profile = await db.users.find_one({"id": user_id})
         
-        chat = await get_gemini_chat(
-            session_id=f"meetings-{user_id}",
-            system_message="You are a meeting coordination assistant specializing in healthcare conferences."
-        )
-        
         recommendations = []
+        time_slots = ["Day 1, 10:00 AM", "Day 1, 2:00 PM", "Day 2, 11:00 AM", "Day 2, 3:00 PM", "Day 3, 9:00 AM"]
         
-        for contact in contacts:
-            prompt = f"""
-            Generate a personalized meeting suggestion for:
+        for i, contact in enumerate(contacts):
+            contact = convert_objectid_to_str(contact)
             
-            Contact: {contact['name']} - {contact['title']} at {contact['company']}
+            # Generate personalized outreach template
+            company = user_profile.get('company', 'Your Company') if user_profile else 'Your Company'
+            goals = user_profile.get('goals', ['networking']) if user_profile else ['networking']
             
-            User: {user_profile.get('name')} from {user_profile.get('company')}
-            User Goals: {user_profile.get('goals')}
-            
-            Create:
-            1. Suggested meeting time/slot
-            2. Personalized outreach message (professional, concise)
-            3. Meeting reason/value proposition
-            """
-            
-            user_message = UserMessage(text=prompt)
-            response = await chat.send_message(user_message)
+            personalized_message = f"Hi {contact.get('name', 'there')}, I'm with {company} and noticed your work at {contact.get('company', '')}. I'd love to discuss {goals[0] if goals else 'potential collaboration'}. Available for coffee at {conference_id.upper()}?"
             
             recommendation = MeetingRecommendation(
                 id=str(uuid.uuid4()),
                 contact_id=contact['id'],
-                contact_name=contact['name'],
-                contact_company=contact['company'],
-                suggested_time="Day 2, 2:00 PM - 2:30 PM",
-                reason=f"Strategic partnership opportunity with {contact['company']}",
-                personalized_message=f"Hi {contact['name']}, I'd love to discuss how {user_profile.get('company')} can support {contact['company']}'s healthcare initiatives. Would you be available for a brief meeting at HIMSS?",
-                priority=contact['priority']
+                contact_name=contact.get('name', 'Unknown'),
+                contact_company=contact.get('company', 'Unknown'),
+                suggested_time=time_slots[i % len(time_slots)],
+                reason=f"Strategic partnership opportunity with {contact.get('company', 'this company')} in {contact.get('industry', 'healthcare')}",
+                personalized_message=personalized_message,
+                priority=contact.get('priority', 'medium')
             )
             
             recommendations.append(recommendation.dict())
@@ -392,7 +367,7 @@ async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
             "total_suggestions": len(recommendations)
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Meeting suggestion error: {str(e)}")
 
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(user_id: str):
