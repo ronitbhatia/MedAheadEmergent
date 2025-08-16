@@ -364,10 +364,15 @@ async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
         
         # Save recommendations
         if recommendations:
-            await db.meetings.insert_many(recommendations)
+            # Convert any ObjectIds in recommendations before inserting
+            clean_recommendations = [convert_objectid_to_str(rec) for rec in recommendations]
+            await db.meetings.insert_many(clean_recommendations)
+        
+        # Ensure recommendations are clean for response
+        clean_recommendations_response = [convert_objectid_to_str(rec) for rec in recommendations]
         
         return {
-            "meeting_suggestions": recommendations,
+            "meeting_suggestions": clean_recommendations_response,
             "total_suggestions": len(recommendations)
         }
     except Exception as e:
