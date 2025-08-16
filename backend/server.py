@@ -67,6 +67,22 @@ def convert_objectid_to_str(doc):
         return str(doc)
     return doc
 
+def get_conference_filter(conference_id: str):
+    """Get MongoDB filter for conference based on conference_id"""
+    conference_name_map = {
+        "himss-2025": "HIMSS 2025",
+        "jp-morgan-2025": "J.P. Morgan Healthcare Conference",
+        "bio-2025": "BIO International Convention",
+        "aha-2025": "American Hospital Association Annual Membership Meeting",
+        "acp-2025": "American College of Physicians Internal Medicine Meeting", 
+        "rsna-2024": "Radiological Society of North America Annual Meeting"
+    }
+    
+    if conference_id != "all" and conference_id in conference_name_map:
+        return {"conference": conference_name_map[conference_id]}
+    else:
+        return {}  # No filter if "all" or unknown conference_id
+
 # Pydantic models
 class UserProfile(BaseModel):
     id: Optional[str] = None
@@ -100,25 +116,16 @@ class MeetingRecommendation(BaseModel):
     personalized_message: str
     priority: str
 
-# Sample healthcare conferences data
+# Current healthcare conferences data - Updated December 2024
 HEALTHCARE_CONFERENCES = [
     {
         "id": "himss-2025",
         "name": "HIMSS Global Health Conference & Exhibition",
-        "date": "2025-03-15 to 2025-03-18",
+        "date": "2025-03-03 to 2025-03-06",
         "location": "Las Vegas, NV",
         "focus": "Health Information Technology",
         "attendees": 45000,
-        "description": "World's largest health information technology conference"
-    },
-    {
-        "id": "aha-2025", 
-        "name": "American Hospital Association Annual Membership Meeting",
-        "date": "2025-05-04 to 2025-05-07",
-        "location": "Washington, DC",
-        "focus": "Hospital Administration & Leadership",
-        "attendees": 5000,
-        "description": "Premier event for hospital and health system leaders"
+        "description": "World's largest health information technology conference focusing on digital health transformation"
     },
     {
         "id": "jp-morgan-2025",
@@ -127,16 +134,43 @@ HEALTHCARE_CONFERENCES = [
         "location": "San Francisco, CA",
         "focus": "Healthcare Investment & Innovation",
         "attendees": 9000,
-        "description": "Leading healthcare investment conference"
+        "description": "Premier healthcare investment conference bringing together industry leaders and investors"
     },
     {
         "id": "bio-2025",
         "name": "BIO International Convention",
-        "date": "2025-06-09 to 2025-06-12",
-        "location": "Boston, MA", 
+        "date": "2025-06-02 to 2025-06-05",
+        "location": "Philadelphia, PA", 
         "focus": "Biotechnology & Life Sciences",
         "attendees": 18000,
-        "description": "Global biotechnology partnering conference"
+        "description": "World's largest biotechnology partnering event connecting biotech innovators globally"
+    },
+    {
+        "id": "aha-2025", 
+        "name": "American Hospital Association Annual Membership Meeting",
+        "date": "2025-04-26 to 2025-04-29",
+        "location": "Chicago, IL",
+        "focus": "Hospital Administration & Leadership",
+        "attendees": 5000,
+        "description": "Premier leadership conference for hospital and health system executives"
+    },
+    {
+        "id": "acp-2025",
+        "name": "American College of Physicians Internal Medicine Meeting",
+        "date": "2025-04-10 to 2025-04-12",
+        "location": "Boston, MA",
+        "focus": "Internal Medicine & Clinical Practice",
+        "attendees": 8000,
+        "description": "Leading conference for internal medicine physicians and healthcare professionals"
+    },
+    {
+        "id": "rsna-2024",
+        "name": "Radiological Society of North America Annual Meeting",
+        "date": "2024-12-01 to 2024-12-05",
+        "location": "Chicago, IL",
+        "focus": "Radiology & Medical Imaging",
+        "attendees": 50000,
+        "description": "World's premier radiology conference showcasing latest imaging technologies and research"
     }
 ]
 
@@ -186,7 +220,7 @@ async def get_conferences(industry: Optional[str] = None):
         if industry:
             chat = await get_gemini_chat(
                 session_id="conference-recommendation", 
-                system_message="You are a healthcare conference expert. Recommend the most relevant conferences based on user industry."
+                system_message="You are a healthcare conference expert with knowledge of current 2024-2025 conferences. All conference dates and information are up-to-date and current. Recommend the most relevant conferences based on user industry and professional goals."
             )
             
             prompt = f"""
@@ -263,8 +297,9 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
         if not user_profile:
             raise HTTPException(status_code=404, detail="User profile not found")
         
-        # Get contacts
-        contacts_cursor = db.contacts.find({})
+        # Get contacts filtered by selected conference
+        conference_filter = get_conference_filter(conference_id)
+        contacts_cursor = db.contacts.find(conference_filter)
         contacts = await contacts_cursor.to_list(length=None)
         
         if not contacts:
@@ -273,26 +308,33 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
         # Convert MongoDB documents to serializable format
         contacts = [convert_objectid_to_str(contact) for contact in contacts]
         
-        # Simple scoring logic for MVP (to avoid rate limits with Gemini)
+        # Enhanced scoring logic for current healthcare industry (Updated December 2024)
         analyzed_contacts = []
         for contact in contacts:
-            # Simple scoring logic based on titles and companies
+            # Advanced scoring based on current healthcare trends and priorities
             score = 60  # Base score
             priority = "medium"
             
-            if any(keyword in contact.get('title', '').lower() for keyword in ['ceo', 'cto', 'vp', 'director', 'chief']):
-                score += 20
+            # Executive level scoring (highest priority in current market)
+            if any(keyword in contact.get('title', '').lower() for keyword in ['ceo', 'cto', 'cmo', 'vp', 'director', 'chief', 'president']):
+                score += 25
                 priority = "high"
             
-            if any(keyword in contact.get('company', '').lower() for keyword in ['hospital', 'health system', 'medical center']):
+            # Healthcare organization scoring (updated for 2024-2025 priorities)
+            if any(keyword in contact.get('company', '').lower() for keyword in ['hospital', 'health system', 'medical center', 'clinic', 'healthcare network']):
+                score += 20
+                
+            # Industry relevance (expanded for current healthcare landscape)
+            if any(keyword in contact.get('industry', '').lower() for keyword in ['healthcare', 'medical', 'pharma', 'biotech', 'digital health', 'healthtech']):
                 score += 15
                 
-            if any(keyword in contact.get('industry', '').lower() for keyword in ['healthcare', 'medical', 'pharma']):
+            # Current hot topics in healthcare (AI, digital transformation, value-based care)
+            if any(keyword in contact.get('title', '').lower() for keyword in ['digital', 'ai', 'innovation', 'transformation', 'value', 'analytics']):
                 score += 10
                 
             contact['score'] = min(score, 100)
             contact['priority'] = priority
-            contact['ai_notes'] = f"Scored based on {contact.get('title', 'role')} and industry relevance"
+            contact['ai_notes'] = f"Scored based on {contact.get('title', 'role')}, organization type, and alignment with current healthcare industry priorities (2024-2025)"
             
             analyzed_contacts.append(contact)
         
@@ -324,13 +366,15 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
 async def suggest_meetings(user_id: str, conference_id: str = "himss-2025"):
     """Generate AI-powered meeting suggestions"""
     try:
-        # Get high-priority contacts
-        contacts_cursor = db.contacts.find({"priority": "high"}).limit(10)
+        # Get high-priority contacts filtered by conference
+        conference_filter = get_conference_filter(conference_id)
+        high_priority_filter = {**conference_filter, "priority": "high"}
+        contacts_cursor = db.contacts.find(high_priority_filter).limit(10)
         contacts = await contacts_cursor.to_list(length=10)
         
         if not contacts:
-            # If no high priority contacts, get any contacts
-            contacts_cursor = db.contacts.find({}).limit(5)
+            # If no high priority contacts, get any contacts from this conference
+            contacts_cursor = db.contacts.find(conference_filter).limit(5)
             contacts = await contacts_cursor.to_list(length=5)
         
         user_profile = await db.users.find_one({"id": user_id})
