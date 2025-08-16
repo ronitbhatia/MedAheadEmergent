@@ -169,6 +169,9 @@ async def get_user_profile(user_id: str):
         profile = await db.users.find_one({"id": user_id})
         if not profile:
             raise HTTPException(status_code=404, detail="Profile not found")
+        
+        # Convert ObjectId to string for JSON serialization
+        profile = convert_objectid_to_str(profile)
         return profile
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
