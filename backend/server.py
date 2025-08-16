@@ -8,7 +8,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import uuid
 import csv
 import io
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 import asyncio
 from bson import ObjectId
 import json
@@ -36,14 +39,19 @@ db = client[DB_NAME]
 # Initialize Gemini AI
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-async def get_gemini_chat(session_id: str, system_message: str):
-    """Initialize Gemini chat with API key"""
-    chat = LlmChat(
-        api_key=GEMINI_API_KEY,
-        session_id=session_id,
-        system_message=system_message
-    ).with_model("gemini", "gemini-2.0-flash")
-    return chat
+def get_gemini_model(system_instruction: str):
+    """Initialize Gemini model with API key"""
+    if not genai:
+        raise ImportError("Google Generative AI package not installed. Install with: pip install google-generativeai")
+    
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not found in environment variables")
+    
+    genai.configure(api_key=GEMINI_API_KEY)
+    return genai.GenerativeModel(
+        model_name="gemini-1.5-pro",
+        system_instruction=system_instruction
+    )
 
 def convert_objectid_to_str(doc):
     """Convert MongoDB ObjectId to string for JSON serialization"""
@@ -210,6 +218,76 @@ async def get_user_profile(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/conferences/research")
+async def research_conferences(query: Optional[str] = None, year: Optional[str] = "2024-2025"):
+    """Use Gemini AI to perform deep research on healthcare conferences"""
+    try:
+        # Initialize Gemini model for deep research
+        model = get_gemini_model(
+            system_instruction="""You are an expert healthcare conference researcher with access to comprehensive industry knowledge. 
+            You specialize in finding current, accurate, and detailed information about major healthcare conferences, 
+            including exact dates, locations, attendee counts, and industry focus areas. 
+            
+            Your research should be thorough, current, and include:
+            - Official conference dates and locations
+            - Expected attendee numbers
+            - Key focus areas and themes
+            - Target audiences and industries
+            - Registration and networking opportunities
+            
+            Always provide factual, up-to-date information and indicate your confidence level in the data."""
+        )
+        
+        research_prompt = f"""
+        Please conduct comprehensive research on major healthcare conferences for {year}. 
+        Focus on finding the most current and accurate information for these key conferences:
+
+        1. HIMSS Global Health Conference & Exhibition
+        2. J.P. Morgan Healthcare Conference  
+        3. BIO International Convention
+        4. American Hospital Association (AHA) Annual Meeting
+        5. American College of Physicians (ACP) Internal Medicine Meeting
+        6. Radiological Society of North America (RSNA) Annual Meeting
+        7. Healthcare Financial Management Association (HFMA) Annual Conference
+        8. American Medical Association (AMA) Annual Meeting
+        9. Digital Health Summit
+        10. Any other major healthcare conferences in {year}
+
+        For each conference, please provide:
+        - Conference name
+        - Exact dates (month and specific days)
+        - Location (city, state, venue if known)
+        - Expected number of attendees
+        - Primary focus areas and themes
+        - Target audience/industries
+        - Brief description of significance
+
+        {f"Additional research focus: {query}" if query else ""}
+        
+        Please format the response as a structured JSON array that can be easily parsed.
+        Ensure all dates are realistic and current for the specified year.
+        """
+        
+        # Generate response
+        response = model.generate_content(research_prompt)
+        research_results = response.text
+        
+        return {
+            "success": True,
+            "research_query": query or f"Healthcare conferences for {year}",
+            "year": year,
+            "research_results": research_results,
+            "source": "Gemini AI Deep Research",
+            "timestamp": "2024-12-20"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Research failed: {str(e)}",
+            "message": "Unable to complete conference research at this time"
+        }
+
 @app.get("/api/conferences")
 async def get_conferences(industry: Optional[str] = None):
     """Get relevant healthcare conferences"""
@@ -218,9 +296,8 @@ async def get_conferences(industry: Optional[str] = None):
         
         # If user provided industry, use AI to recommend most relevant conferences
         if industry:
-            chat = await get_gemini_chat(
-                session_id="conference-recommendation", 
-                system_message="You are a healthcare conference expert with knowledge of current 2024-2025 conferences. All conference dates and information are up-to-date and current. Recommend the most relevant conferences based on user industry and professional goals."
+            model = get_gemini_model(
+                system_instruction="You are a healthcare conference expert with knowledge of current 2024-2025 conferences. All conference dates and information are up-to-date and current. Recommend the most relevant conferences based on user industry and professional goals."
             )
             
             prompt = f"""
@@ -232,8 +309,7 @@ async def get_conferences(industry: Optional[str] = None):
             Format: ["conference-id-1", "conference-id-2", ...]
             """
             
-            user_message = UserMessage(text=prompt)
-            response = await chat.send_message(user_message)
+            response = model.generate_content(prompt)
             
             # Simple ranking - in production you'd parse AI response
             # For MVP, return all conferences with relevance scores
