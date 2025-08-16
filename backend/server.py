@@ -45,6 +45,28 @@ async def get_gemini_chat(session_id: str, system_message: str):
     ).with_model("gemini", "gemini-2.0-flash")
     return chat
 
+def convert_objectid_to_str(doc):
+    """Convert MongoDB ObjectId to string for JSON serialization"""
+    if doc is None:
+        return None
+    if isinstance(doc, list):
+        return [convert_objectid_to_str(item) for item in doc]
+    if isinstance(doc, dict):
+        result = {}
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                result[key] = str(value)
+            elif isinstance(value, dict):
+                result[key] = convert_objectid_to_str(value)
+            elif isinstance(value, list):
+                result[key] = [convert_objectid_to_str(item) for item in value]
+            else:
+                result[key] = value
+        return result
+    elif isinstance(doc, ObjectId):
+        return str(doc)
+    return doc
+
 # Pydantic models
 class UserProfile(BaseModel):
     id: Optional[str] = None
