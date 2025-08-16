@@ -298,9 +298,11 @@ async def analyze_contacts(user_id: str, conference_id: str = "himss-2025"):
         
         # Update contacts in database
         for contact in analyzed_contacts:
+            # Remove MongoDB _id field before updating to avoid immutable field error
+            contact_update = {k: v for k, v in contact.items() if k != '_id'}
             await db.contacts.replace_one(
                 {"id": contact["id"]},
-                contact,
+                contact_update,
                 upsert=True
             )
         
